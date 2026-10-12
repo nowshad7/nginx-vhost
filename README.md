@@ -4,6 +4,10 @@
 [![Release](https://img.shields.io/github/v/release/nowshad7/nginx-vhost)](https://github.com/nowshad7/nginx-vhost/releases/latest)
 [![License: MIT](https://img.shields.io/github/license/nowshad7/nginx-vhost)](LICENSE)
 
+<p align="center">
+  <img src="assets/banner.jpg" alt="nginx-vhost: a 1970s hotel concierge at the nginx-vhost front desk hands out room keys, routing app.local to proxy :3000, shop.local to a PHP app and docs.local to a static site, with configs checked by nginx -t and rolled back if bad" width="100%">
+</p>
+
 Point any local domain at any location — a reverse proxy, a static site, or a
 PHP app — with a single command. Think of it as the nginx answer to the classic
 Apache `vhost` helper scripts, but safer and with teardown built in.
