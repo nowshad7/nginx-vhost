@@ -1,0 +1,498 @@
+#!/usr/bin/env bash
+#
+# nginx-vhost - point any local domain at any location, the easy way.
+#
+#   nginx-vhost add app.local 3000          # reverse proxy -> 127.0.0.1:3000
+#   nginx-vhost add shop.local /var/www/shop       # static / PHP docroot (auto-detected)
+#   nginx-vhost add api.local http://127.0.0.1:9000 # proxy to any URL
+#   nginx-vhost rm  app.local               # clean teardown
+#   nginx-vhost list                               # show managed vhosts
+#
+# It writes an nginx server block, enables it, manages the /etc/hosts entry,
+# and - unlike the old apache vhost scripts - validates with `nginx -t` BEFORE
+# reloading, rolling back automatically if the config is invalid.
+#
+# MIT licensed. https://github.com/nowshad7/nginx-vhost
+
+set -euo pipefail
+
+VERSION="1.0.0"
+PROG="${0##*/}"
+
+# ---------------------------------------------------------------------------
+# Configuration (override via environment if your distro differs)
+# ---------------------------------------------------------------------------
+NGINX_AVAILABLE="${NGINX_VHOST_AVAILABLE:-/etc/nginx/sites-available}"
+NGINX_ENABLED="${NGINX_VHOST_ENABLED:-/etc/nginx/sites-enabled}"
+NGINX_SSL_DIR="${NGINX_VHOST_SSL_DIR:-/etc/nginx/ssl}"
+HOSTS_FILE="${NGINX_VHOST_HOSTS:-/etc/hosts}"
+LOG_DIR="${NGINX_VHOST_LOG_DIR:-/var/log/nginx}"
+MANAGED_MARKER="# Managed by nginx-vhost - edit via \`$PROG\`, not by hand"
+
+# ---------------------------------------------------------------------------
+# Output helpers
+# ---------------------------------------------------------------------------
+if [ -t 1 ]; then
+  C_RESET=$'\033[0m'; C_BOLD=$'\033[1m'; C_RED=$'\033[31m'
+  C_GREEN=$'\033[32m'; C_YELLOW=$'\033[33m'; C_DIM=$'\033[2m'
+else
+  C_RESET=; C_BOLD=; C_RED=; C_GREEN=; C_YELLOW=; C_DIM=
+fi
+
+info()  { printf '%s\n' "${C_GREEN}==>${C_RESET} $*"; }
+step()  { printf '%s\n' "    ${C_DIM}$*${C_RESET}"; }
+warn()  { printf '%s\n' "${C_YELLOW}warning:${C_RESET} $*" >&2; }
+die()   { printf '%s\n' "${C_RED}error:${C_RESET} $*" >&2; exit 1; }
+
+usage() {
+  cat <<EOF
+${C_BOLD}$PROG${C_RESET} v$VERSION - point any local domain at any location.
+
+${C_BOLD}USAGE${C_RESET}
+  $PROG add <domain> <target> [options]
+  $PROG rm  <domain>
+  $PROG list
+  $PROG help
+
+${C_BOLD}TARGET${C_RESET} (auto-detected)
+  3000                  reverse proxy to http://127.0.0.1:3000
+  host:8080             reverse proxy to http://host:8080
+  http://127.0.0.1:9000 reverse proxy to that URL
+  /var/www/app          serve a directory (PHP-FPM if index.php present, else static)
+
+${C_BOLD}OPTIONS${C_RESET}
+  --php                 force PHP-FPM mode for a directory target
+  --static              force static mode for a directory target
+  --php-sock <path>     PHP-FPM socket (default: autodetected, else 127.0.0.1:9000)
+  --alias <names>       extra server_name aliases (space/comma separated)
+  --ssl                 add local HTTPS via mkcert (and redirect HTTP -> HTTPS)
+  --ip <addr>           /etc/hosts IP for the domain (default: 127.0.0.1)
+  --port <n>            HTTP listen port (default: 80)
+  --no-hosts            do not touch $HOSTS_FILE
+  --force               overwrite an existing vhost of the same name
+  --dry-run             print what would happen; write nothing
+  -h, --help            show this help
+
+${C_BOLD}EXAMPLES${C_RESET}
+  $PROG add app.local 3000
+  $PROG add web.local 8080
+  $PROG add shop.local /var/www/shop --php --ssl
+  $PROG rm app.local
+EOF
+}
+
+# ---------------------------------------------------------------------------
+# Privilege: re-exec under sudo for mutating actions
+# ---------------------------------------------------------------------------
+ensure_root() {
+  [ "$DRY_RUN" -eq 1 ] && return 0
+  # Skip elevation when we can already write everything this run needs.
+  if [ -w "$NGINX_AVAILABLE" ] && [ -w "$NGINX_ENABLED" ] \
+     && { [ "$NO_HOSTS" -eq 1 ] || [ -w "$HOSTS_FILE" ]; }; then
+    return 0
+  fi
+  if [ "$(id -u)" -ne 0 ]; then
+    command -v sudo >/dev/null 2>&1 || die "must run as root (sudo not found)"
+    info "elevating with sudo..."
+    exec sudo -E "$0" "${ORIG_ARGS[@]}"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# Validation
+# ---------------------------------------------------------------------------
+valid_domain() {
+  case "$1" in
+    *[!a-zA-Z0-9.-]* | "" | .* | *. | *..*) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+conf_path()    { printf '%s/%s.conf' "$NGINX_AVAILABLE" "$1"; }
+enabled_path() { printf '%s/%s.conf' "$NGINX_ENABLED" "$1"; }
+
+# ---------------------------------------------------------------------------
+# PHP-FPM socket detection
+# ---------------------------------------------------------------------------
+detect_php_sock() {
+  local s
+  for s in /run/php/php*-fpm.sock /var/run/php/php*-fpm.sock; do
+    [ -S "$s" ] && { printf '%s' "$s"; return 0; }
+  done
+  return 1
+}
+
+# ---------------------------------------------------------------------------
+# Server-block rendering
+# ---------------------------------------------------------------------------
+# Emits the inner location/handler directives for the chosen mode.
+render_handler() {
+  case "$MODE" in
+    proxy)
+      cat <<EOF
+    location / {
+        proxy_pass $PROXY_URL;
+        proxy_http_version 1.1;
+        proxy_set_header Host              \$host;
+        proxy_set_header X-Real-IP         \$remote_addr;
+        proxy_set_header X-Forwarded-For   \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header X-Forwarded-Host  \$host;
+        proxy_set_header Upgrade           \$http_upgrade;
+        proxy_set_header Connection        "upgrade";
+        proxy_read_timeout 300s;
+    }
+EOF
+      ;;
+    static)
+      cat <<EOF
+    root $DOCROOT;
+    index index.html index.htm;
+
+    location / {
+        try_files \$uri \$uri/ =404;
+    }
+
+    location ~ /\.(?!well-known).* {
+        deny all;
+    }
+EOF
+      ;;
+    php)
+      cat <<EOF
+    root $DOCROOT;
+    index index.php index.html index.htm;
+
+    location / {
+        try_files \$uri \$uri/ /index.php\$is_args\$args;
+    }
+
+    location ~ \.php\$ {
+        include ${FASTCGI_SNIPPET};
+        fastcgi_pass $PHP_PASS;
+        fastcgi_param SCRIPT_FILENAME \$realpath_root\$fastcgi_script_name;
+        fastcgi_param DOCUMENT_ROOT   \$realpath_root;
+        fastcgi_read_timeout 300;
+    }
+
+    location ~ /\.(?!well-known).* {
+        deny all;
+    }
+EOF
+      ;;
+  esac
+}
+
+render_common() {
+  cat <<EOF
+    client_max_body_size 100M;
+    access_log $LOG_DIR/${DOMAIN}.access.log;
+    error_log  $LOG_DIR/${DOMAIN}.error.log;
+EOF
+}
+
+render_conf() {
+  local server_names="$DOMAIN"
+  [ -n "$ALIASES" ] && server_names="$DOMAIN $ALIASES"
+
+  printf '%s\n' "$MANAGED_MARKER"
+  printf '# nginx-vhost: domain=%s mode=%s target=%s\n\n' "$DOMAIN" "$MODE" "$TARGET"
+
+  if [ "$USE_SSL" -eq 1 ]; then
+    # HTTP -> HTTPS redirect
+    cat <<EOF
+server {
+    listen $HTTP_PORT;
+    server_name $server_names;
+    return 301 https://\$host\$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name $server_names;
+
+    ssl_certificate     $NGINX_SSL_DIR/${DOMAIN}.pem;
+    ssl_certificate_key $NGINX_SSL_DIR/${DOMAIN}-key.pem;
+
+EOF
+    render_common
+    printf '\n'
+    render_handler
+    printf '}\n'
+  else
+    cat <<EOF
+server {
+    listen $HTTP_PORT;
+    server_name $server_names;
+
+EOF
+    render_common
+    printf '\n'
+    render_handler
+    printf '}\n'
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# /etc/hosts management
+# ---------------------------------------------------------------------------
+hosts_add() {
+  [ "$NO_HOSTS" -eq 1 ] && return 0
+  local names="$DOMAIN"
+  [ -n "$ALIASES" ] && names="$DOMAIN $ALIASES"
+  local line="$HOSTS_IP	$names	# nginx-vhost:$DOMAIN"
+
+  if [ "$DRY_RUN" -eq 1 ]; then
+    step "would add to $HOSTS_FILE: $line"
+    return 0
+  fi
+  # Drop any previous entry we own for this domain, then append fresh.
+  if grep -q "# nginx-vhost:$DOMAIN\$" "$HOSTS_FILE" 2>/dev/null; then
+    grep -v "# nginx-vhost:$DOMAIN\$" "$HOSTS_FILE" > "$HOSTS_FILE.nvtmp"
+    cat "$HOSTS_FILE.nvtmp" > "$HOSTS_FILE"
+    rm -f "$HOSTS_FILE.nvtmp"
+  fi
+  printf '%s\n' "$line" >> "$HOSTS_FILE"
+  step "updated $HOSTS_FILE"
+}
+
+hosts_remove() {
+  grep -q "# nginx-vhost:$1\$" "$HOSTS_FILE" 2>/dev/null || return 0
+  if [ "$DRY_RUN" -eq 1 ]; then
+    step "would remove $1 from $HOSTS_FILE"
+    return 0
+  fi
+  grep -v "# nginx-vhost:$1\$" "$HOSTS_FILE" > "$HOSTS_FILE.nvtmp"
+  cat "$HOSTS_FILE.nvtmp" > "$HOSTS_FILE"
+  rm -f "$HOSTS_FILE.nvtmp"
+  step "cleaned $HOSTS_FILE"
+}
+
+# ---------------------------------------------------------------------------
+# nginx reload with validation + rollback
+# ---------------------------------------------------------------------------
+nginx_validate_reload() {
+  if [ "$DRY_RUN" -eq 1 ]; then
+    step "would run: nginx -t && reload"
+    return 0
+  fi
+  if nginx -t >/tmp/nginx-vhost-test.$$ 2>&1; then
+    rm -f /tmp/nginx-vhost-test.$$
+    if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet nginx; then
+      systemctl reload nginx
+    else
+      nginx -s reload
+    fi
+    return 0
+  fi
+  warn "nginx config test failed:"
+  sed 's/^/    /' /tmp/nginx-vhost-test.$$ >&2
+  rm -f /tmp/nginx-vhost-test.$$
+  return 1
+}
+
+# ---------------------------------------------------------------------------
+# SSL via mkcert
+# ---------------------------------------------------------------------------
+make_cert() {
+  command -v mkcert >/dev/null 2>&1 || \
+    die "--ssl needs mkcert (https://github.com/FiloSottile/mkcert). Install it, then 'mkcert -install'."
+  if [ "$DRY_RUN" -eq 1 ]; then
+    step "would generate cert for $DOMAIN ${ALIASES:+and aliases} in $NGINX_SSL_DIR"
+    return 0
+  fi
+  mkdir -p "$NGINX_SSL_DIR"
+  # shellcheck disable=SC2086
+  mkcert -cert-file "$NGINX_SSL_DIR/${DOMAIN}.pem" \
+         -key-file  "$NGINX_SSL_DIR/${DOMAIN}-key.pem" \
+         "$DOMAIN" $ALIASES
+  step "generated local cert in $NGINX_SSL_DIR"
+}
+
+# ---------------------------------------------------------------------------
+# Subcommand: add
+# ---------------------------------------------------------------------------
+cmd_add() {
+  [ -n "$DOMAIN" ] || die "missing domain. See '$PROG help'."
+  [ -n "$TARGET" ] || die "missing target. See '$PROG help'."
+  valid_domain "$DOMAIN" || die "invalid domain name: $DOMAIN"
+
+  # Resolve FastCGI snippet path (Debian/Ubuntu vs others).
+  FASTCGI_SNIPPET="snippets/fastcgi-php.conf"
+  [ -f /etc/nginx/snippets/fastcgi-php.conf ] || FASTCGI_SNIPPET="fastcgi.conf"
+
+  # ---- classify the target -------------------------------------------------
+  PROXY_URL=""; DOCROOT=""; PHP_PASS=""
+  if [ "$FORCE_PHP" -eq 1 ] || [ "$FORCE_STATIC" -eq 1 ] || [ -d "$TARGET" ] \
+     || case "$TARGET" in /*|./*|../*|~*) true ;; *) false ;; esac; then
+    # directory target
+    DOCROOT="$(cd "$TARGET" 2>/dev/null && pwd || printf '%s' "$TARGET")"
+    [ -d "$DOCROOT" ] || die "document root does not exist: $TARGET"
+    if [ "$FORCE_STATIC" -eq 1 ]; then
+      MODE="static"
+    elif [ "$FORCE_PHP" -eq 1 ] || [ -f "$DOCROOT/index.php" ]; then
+      MODE="php"
+      if [ -n "$PHP_SOCK" ]; then
+        PHP_PASS="unix:$PHP_SOCK"
+      elif sock="$(detect_php_sock)"; then
+        PHP_PASS="unix:$sock"
+      else
+        PHP_PASS="127.0.0.1:9000"
+        warn "no PHP-FPM socket found; defaulting to 127.0.0.1:9000"
+      fi
+    else
+      MODE="static"
+    fi
+  else
+    MODE="proxy"
+    case "$TARGET" in
+      http://*|https://*) PROXY_URL="$TARGET" ;;
+      *:[0-9]*)           PROXY_URL="http://$TARGET" ;;
+      [0-9]*)
+        case "$TARGET" in
+          *[!0-9]*) die "unrecognized target: $TARGET (expected a port, host:port, URL, or directory)" ;;
+          *) PROXY_URL="http://127.0.0.1:$TARGET" ;;
+        esac ;;
+      *) die "unrecognized target: $TARGET (expected a port, host:port, URL, or directory)" ;;
+    esac
+  fi
+
+  local conf; conf="$(conf_path "$DOMAIN")"
+  if [ -e "$conf" ] && [ "$FORCE" -ne 1 ]; then
+    die "vhost already exists: $conf (use --force to overwrite, or '$PROG rm $DOMAIN')"
+  fi
+
+  ensure_root
+
+  case "$MODE" in
+    proxy)  info "adding ${C_BOLD}$DOMAIN${C_RESET} -> proxy $PROXY_URL" ;;
+    static) info "adding ${C_BOLD}$DOMAIN${C_RESET} -> static $DOCROOT" ;;
+    php)    info "adding ${C_BOLD}$DOMAIN${C_RESET} -> PHP $DOCROOT ($PHP_PASS)" ;;
+  esac
+
+  [ "$USE_SSL" -eq 1 ] && make_cert
+
+  if [ "$DRY_RUN" -eq 1 ]; then
+    step "would write $conf:"
+    render_conf | sed 's/^/        /'
+    hosts_add
+    nginx_validate_reload
+    info "dry run complete - nothing changed."
+    return 0
+  fi
+
+  mkdir -p "$NGINX_AVAILABLE" "$NGINX_ENABLED" "$LOG_DIR"
+  render_conf > "$conf"
+  step "wrote $conf"
+  ln -sfn "$conf" "$(enabled_path "$DOMAIN")"
+  step "enabled $(enabled_path "$DOMAIN")"
+  hosts_add
+
+  if ! nginx_validate_reload; then
+    rm -f "$conf" "$(enabled_path "$DOMAIN")"
+    hosts_remove "$DOMAIN"
+    die "rolled back $DOMAIN because nginx rejected the config."
+  fi
+
+  local scheme="http"; [ "$USE_SSL" -eq 1 ] && scheme="https"
+  info "${C_GREEN}done${C_RESET} - $scheme://$DOMAIN is live"
+}
+
+# ---------------------------------------------------------------------------
+# Subcommand: rm
+# ---------------------------------------------------------------------------
+cmd_rm() {
+  [ -n "$DOMAIN" ] || die "missing domain. Usage: $PROG rm <domain>"
+  valid_domain "$DOMAIN" || die "invalid domain name: $DOMAIN"
+  local conf; conf="$(conf_path "$DOMAIN")"
+  local enabled; enabled="$(enabled_path "$DOMAIN")"
+
+  if [ ! -e "$conf" ] && [ ! -L "$enabled" ]; then
+    warn "no vhost named $DOMAIN found"
+  fi
+
+  ensure_root
+  info "removing ${C_BOLD}$DOMAIN${C_RESET}"
+
+  if [ "$DRY_RUN" -eq 1 ]; then
+    step "would remove $conf and $enabled"
+    [ -f "$NGINX_SSL_DIR/${DOMAIN}.pem" ] && step "would remove cert $NGINX_SSL_DIR/${DOMAIN}.pem"
+    hosts_remove "$DOMAIN"
+    nginx_validate_reload
+    info "dry run complete - nothing changed."
+    return 0
+  fi
+
+  rm -f "$enabled" "$conf"
+  step "removed config"
+  rm -f "$NGINX_SSL_DIR/${DOMAIN}.pem" "$NGINX_SSL_DIR/${DOMAIN}-key.pem"
+  hosts_remove "$DOMAIN"
+  nginx_validate_reload || warn "nginx reload reported a problem; check 'nginx -t'"
+  info "${C_GREEN}done${C_RESET} - $DOMAIN removed"
+}
+
+# ---------------------------------------------------------------------------
+# Subcommand: list
+# ---------------------------------------------------------------------------
+cmd_list() {
+  local found=0 f meta domain mode target enabled
+  printf '%s\n' "${C_BOLD}DOMAIN                          MODE     TARGET${C_RESET}"
+  for f in "$NGINX_AVAILABLE"/*.conf; do
+    [ -e "$f" ] || continue
+    meta="$(grep -m1 '^# nginx-vhost:' "$f" 2>/dev/null || true)"
+    [ -n "$meta" ] || continue
+    found=1
+    domain="$(printf '%s' "$meta" | sed -n 's/.*domain=\([^ ]*\).*/\1/p')"
+    mode="$(printf '%s' "$meta"   | sed -n 's/.*mode=\([^ ]*\).*/\1/p')"
+    target="$(printf '%s' "$meta" | sed -n 's/.*target=\(.*\)$/\1/p')"
+    if [ -L "$(enabled_path "$domain")" ]; then enabled=""; else enabled=" ${C_YELLOW}(disabled)${C_RESET}"; fi
+    printf '%-31s %-8s %s%s\n' "$domain" "$mode" "$target" "$enabled"
+  done
+  [ "$found" -eq 1 ] || printf '%s\n' "    ${C_DIM}(none managed by $PROG yet)${C_RESET}"
+}
+
+# ---------------------------------------------------------------------------
+# Argument parsing
+# ---------------------------------------------------------------------------
+ORIG_ARGS=("$@")
+CMD="${1:-help}"; shift || true
+
+DOMAIN=""; TARGET=""; MODE=""
+ALIASES=""; PHP_SOCK=""; HOSTS_IP="127.0.0.1"; HTTP_PORT="80"
+FORCE=0; FORCE_PHP=0; FORCE_STATIC=0; USE_SSL=0; NO_HOSTS=0; DRY_RUN=0
+
+positionals=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --php)       FORCE_PHP=1 ;;
+    --static)    FORCE_STATIC=1 ;;
+    --php-sock)  PHP_SOCK="${2:?--php-sock needs a path}"; shift ;;
+    --alias)     ALIASES="$ALIASES ${2:?--alias needs a value}"; shift ;;
+    --ssl)       USE_SSL=1 ;;
+    --ip)        HOSTS_IP="${2:?--ip needs a value}"; shift ;;
+    --port)      HTTP_PORT="${2:?--port needs a value}"; shift ;;
+    --no-hosts)  NO_HOSTS=1 ;;
+    --force)     FORCE=1 ;;
+    --dry-run)   DRY_RUN=1 ;;
+    -h|--help)   usage; exit 0 ;;
+    --) shift; while [ $# -gt 0 ]; do positionals+=("$1"); shift; done; break ;;
+    -*) die "unknown option: $1 (see '$PROG help')" ;;
+    *)  positionals+=("$1") ;;
+  esac
+  shift
+done
+
+# Normalize comma-separated aliases to space-separated, trim.
+ALIASES="$(printf '%s' "$ALIASES" | tr ',' ' ' | xargs 2>/dev/null || true)"
+
+DOMAIN="${positionals[0]:-}"
+TARGET="${positionals[1]:-}"
+
+case "$CMD" in
+  add)            cmd_add ;;
+  rm|remove|del)  cmd_rm ;;
+  list|ls)        cmd_list ;;
+  help|-h|--help) usage ;;
+  version|--version|-v) printf '%s %s\n' "$PROG" "$VERSION" ;;
+  *) die "unknown command: $CMD (see '$PROG help')" ;;
+esac
