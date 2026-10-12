@@ -1,0 +1,23 @@
+# nginx-vhost
+
+> A single Bash script that points a local domain at a reverse proxy, a static
+> site, or a PHP-FPM app. It writes the nginx server block, enables it, manages
+> /etc/hosts, and validates with `nginx -t` before reloading. If validation
+> fails, it rolls the change back.
+
+Commands: `nginx-vhost add <domain> <target> [options]`, `nginx-vhost rm <domain>`,
+`nginx-vhost list [--json]`, `nginx-vhost help`. Use `--dry-run` to preview a
+change without writing anything. `add` and `rm` need root (the script re-runs
+itself with sudo). The `NGINX_VHOST_*` environment variables redirect every
+path it writes.
+
+## Docs
+
+- [README](README.md): install, usage, target forms, options, examples
+- [AGENTS.md](AGENTS.md): conventions for AI agents (safe commands, sandboxing, checks)
+- [nginx-vhost](nginx-vhost): the script itself; `usage()` is the authoritative option list
+
+## Optional
+
+- [tests/run.sh](tests/run.sh): sandboxed test suite (no root or nginx needed)
+- [LICENSE](LICENSE): MIT

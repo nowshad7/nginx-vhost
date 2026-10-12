@@ -13,6 +13,22 @@ nginx-vhost list                                 # show what's configured
 nginx-vhost rm  app.local                 # clean teardown
 ```
 
+What it looks like:
+
+```console
+$ nginx-vhost add app.local 3000
+==> adding app.local -> proxy http://127.0.0.1:3000
+    wrote /etc/nginx/sites-available/app.local.conf
+    enabled /etc/nginx/sites-enabled/app.local.conf
+    updated /etc/hosts
+==> done - http://app.local is live
+
+$ nginx-vhost list
+DOMAIN                          MODE     TARGET
+app.local                       proxy    3000
+shop.local                      php      /var/www/shop/public
+```
+
 ## Why
 
 Spinning up a friendly local domain for a dev service usually means hand-editing
@@ -35,7 +51,8 @@ your running server.
   nginx is never left broken.
 - **Clean teardown** — `rm` deletes the config, the symlink, the `/etc/hosts`
   line, and any generated certificate.
-- **`list`** shows every vhost it manages and where each one points.
+- **`list`** shows every vhost it manages and where each one points. Add
+  `--json` for output that scripts can parse.
 - **Local HTTPS** with `--ssl` via [mkcert](https://github.com/FiloSottile/mkcert).
 - **WebSocket-ready** proxy headers out of the box.
 - **`--dry-run`** prints exactly what it would do without writing anything.
@@ -43,6 +60,8 @@ your running server.
 ## Install
 
 ```bash
+git clone https://github.com/nowshad7/nginx-vhost.git
+cd nginx-vhost
 sudo ./install.sh          # copies nginx-vhost to /usr/local/bin
 # or manually:
 sudo install -m 0755 nginx-vhost /usr/local/bin/nginx-vhost
@@ -55,7 +74,7 @@ Requires `nginx` and `bash`. PHP apps need `php-fpm`. HTTPS needs `mkcert`.
 ```
 nginx-vhost add <domain> <target> [options]
 nginx-vhost rm  <domain>
-nginx-vhost list
+nginx-vhost list [--json]
 nginx-vhost help
 ```
 
@@ -82,6 +101,7 @@ nginx-vhost help
 | `--no-hosts` | don't touch `/etc/hosts` |
 | `--force` | overwrite an existing vhost of the same name |
 | `--dry-run` | print what would happen; write nothing |
+| `--json` | `list` only: print managed vhosts as a JSON array |
 
 ### Examples
 
@@ -114,6 +134,12 @@ Config files live in `/etc/nginx/sites-available/<domain>.conf`, symlinked into
 Paths can be overridden with environment variables (`NGINX_VHOST_AVAILABLE`,
 `NGINX_VHOST_ENABLED`, `NGINX_VHOST_SSL_DIR`, `NGINX_VHOST_HOSTS`,
 `NGINX_VHOST_LOG_DIR`) if your distro lays nginx out differently.
+
+## Contributing
+
+Run `shellcheck nginx-vhost install.sh tests/run.sh` and `./tests/run.sh`
+before you open a PR. The tests run in a sandbox and need no root or nginx.
+AI coding agents should read [AGENTS.md](AGENTS.md).
 
 ## License
 
