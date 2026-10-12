@@ -11,13 +11,19 @@ change without writing anything. `add` and `rm` need root (the script re-runs
 itself with sudo). The `NGINX_VHOST_*` environment variables redirect every
 path it writes.
 
+Install the latest release:
+`sudo curl -fsSL https://github.com/nowshad7/nginx-vhost/releases/latest/download/nginx-vhost -o /usr/local/bin/nginx-vhost && sudo chmod 0755 /usr/local/bin/nginx-vhost`
+
+Repository: https://github.com/nowshad7/nginx-vhost
+
 ## Docs
 
-- [README](README.md): install, usage, target forms, options, examples
-- [AGENTS.md](AGENTS.md): conventions for AI agents (safe commands, sandboxing, checks)
-- [nginx-vhost](nginx-vhost): the script itself; `usage()` is the authoritative option list
+- [README](https://raw.githubusercontent.com/nowshad7/nginx-vhost/main/README.md): install, usage, target forms, options, examples
+- [AGENTS.md](https://raw.githubusercontent.com/nowshad7/nginx-vhost/main/AGENTS.md): conventions for AI agents (safe commands, sandboxing, checks)
+- [nginx-vhost](https://raw.githubusercontent.com/nowshad7/nginx-vhost/main/nginx-vhost): the script itself; `usage()` is the authoritative option list
 
 ## Optional
 
-- [tests/run.sh](tests/run.sh): sandboxed test suite (no root or nginx needed)
-- [LICENSE](LICENSE): MIT
+- [CHANGELOG](https://raw.githubusercontent.com/nowshad7/nginx-vhost/main/CHANGELOG.md): release history
+- [tests/run.sh](https://raw.githubusercontent.com/nowshad7/nginx-vhost/main/tests/run.sh): sandboxed test suite (no root or nginx needed)
+- [LICENSE](https://raw.githubusercontent.com/nowshad7/nginx-vhost/main/LICENSE): MIT

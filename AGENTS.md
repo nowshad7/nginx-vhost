@@ -12,6 +12,8 @@ tool does and how people use it, read [README.md](README.md) first.
 | `README.md` | User-facing docs: keep it in sync with `usage()` in the script |
 | `tests/run.sh` | Sandboxed test suite: no root, nginx or network needed |
 | `.github/workflows/ci.yml` | CI: runs shellcheck and `tests/run.sh` on every push and PR |
+| `.github/workflows/release.yml` | On a `v*` tag: checks `VERSION`, runs the checks, attaches the script and its sha256 to the release |
+| `CHANGELOG.md` | Release history ([Keep a Changelog](https://keepachangelog.com/en/1.1.0/)) |
 | `llms.txt` | Short summary of the project for LLMs |
 
 There are no dependencies to install and no build step.
@@ -126,5 +128,11 @@ you change behavior, add a case to `tests/run.sh`.
   and this file together.
 - `rm` doesn't prompt for confirmation, on purpose: the tool has to stay usable
   from scripts. Agents should confirm with the user before running `rm`.
+- Note user-visible changes under a new version heading in `CHANGELOG.md`.
+  To release: set `VERSION` in `nginx-vhost` to match the heading, merge,
+  then push a `vX.Y.Z` tag. The release workflow refuses a tag that doesn't
+  match `VERSION`, and it uses that heading's section as the release notes.
+- Temporary files go through `mktemp`, never a fixed `/tmp` path: the script
+  runs as root.
 - Generated configs keep the `MANAGED_MARKER` line and the `# nginx-vhost:`
   metadata line. `list` and `rm` depend on both.
