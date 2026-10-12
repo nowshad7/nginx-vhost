@@ -131,7 +131,9 @@ you change behavior, add a case to `tests/run.sh`.
 - Note user-visible changes under a new version heading in `CHANGELOG.md`.
   To release: set `VERSION` in `nginx-vhost` to match the heading, merge,
   then push a `vX.Y.Z` tag. The release workflow refuses a tag that doesn't
-  match `VERSION`, and it uses that heading's section as the release notes.
+  match `VERSION`, and it uses that heading's section as the release notes. To backfill
+  an existing release, run the Release workflow manually (Actions → Release →
+  Run workflow) with the tag. It only fills in notes that are empty.
 - Temporary files go through `mktemp`, never a fixed `/tmp` path: the script
   runs as root.
 - Generated configs keep the `MANAGED_MARKER` line and the `# nginx-vhost:`

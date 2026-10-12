@@ -24,7 +24,9 @@ printf '#!/bin/sh\necho "stub: config rejected" >&2\nexit 1\n' > "$WORK/nginx-fa
 mkdir -p "$WORK/nginx-probe"
 # shellcheck disable=SC2016  # $TMPDIR must expand inside the stub, not here
 printf '#!/bin/sh\nls "$TMPDIR" > "$TMPDIR/../probe"\nexit 1\n' > "$WORK/nginx-probe/nginx"
-chmod +x "$WORK"/nginx-*/nginx
+# systemctl as it behaves in a container where systemd isn't PID 1.
+printf '#!/bin/sh\necho "System has not been booted with systemd" >&2\nexit 1\n' > "$WORK/nginx-pass/systemctl"
+chmod +x "$WORK"/nginx-*/nginx "$WORK/nginx-pass/systemctl"
 
 # Fresh sandbox per test. Sets OUT and RC from the last `run`.
 new_sandbox() {
@@ -117,6 +119,7 @@ grep -qE '^nginx-vhost-test\.[A-Za-z0-9]{6}$' "$S/probe" 2>/dev/null \
   && ok "nginx -t output goes to a mktemp file in TMPDIR" \
   || fail "nginx -t output goes to a mktemp file in TMPDIR" "$(cat "$S/probe" 2>/dev/null)"
 run pass add good.local 3000
+! has "System has not been booted" && ok "no systemctl noise without systemd" || fail "no systemctl noise without systemd" "$OUT"
 [ $RC -eq 0 ] && [ -z "$(ls -A "$S/tmp")" ] && ok "temp file removed after passing test" || fail "temp file removed after passing test" "$(ls -A "$S/tmp")"
 
 echo "hosts file holding only managed entries"

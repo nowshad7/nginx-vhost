@@ -3,20 +3,37 @@ name: Release
 on:
   push:
     tags: ['v*']
+  # Re-publish an existing tag, e.g. to backfill missing notes or assets.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to publish, e.g. v1.0.1'
+        required: true
 
 permissions:
   contents: write
+
+env:
+  TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
   release:
     runs-on: ubuntu-latest
     steps:
+      - name: Check tag format
+        run: |
+          if ! printf '%s' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::'$TAG' is not a vX.Y.Z tag"
+            exit 1
+          fi
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
       - name: Check VERSION matches the tag
         run: |
           v="$(sed -n 's/^VERSION="\(.*\)"$/\1/p' nginx-vhost)"
-          if [ "v$v" != "$GITHUB_REF_NAME" ]; then
-            echo "::error::nginx-vhost has VERSION=$v but the tag is $GITHUB_REF_NAME"
+          if [ "v$v" != "$TAG" ]; then
+            echo "::error::nginx-vhost has VERSION=$v but the tag is $TAG"
             exit 1
           fi
       - name: shellcheck
@@ -29,11 +46,17 @@ jobs:
         run: |
           sha256sum nginx-vhost > nginx-vhost.sha256
           # Release notes: this version's section of CHANGELOG.md.
-          awk -v v="${GITHUB_REF_NAME#v}" '
+          awk -v v="${TAG#v}" '
             /^## \[/ { p = index($0, "[" v "]") > 0; next }
             /^\[[^]]*\]: / { p = 0 }
             p' CHANGELOG.md > notes.md
-          # The release may already exist if it was created in the GitHub UI.
-          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
-            || gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file notes.md
-          gh release upload "$GITHUB_REF_NAME" nginx-vhost nginx-vhost.sha256 --clobber
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            # Created in the GitHub UI: fill in the notes only if they're empty,
+            # so notes written by hand are never overwritten.
+            if [ -z "$(gh release view "$TAG" --json body --jq '(.body // "") | gsub("\\s"; "")')" ]; then
+              gh release edit "$TAG" --notes-file notes.md
+            fi
+          else
+            gh release create "$TAG" --title "$TAG" --notes-file notes.md
+          fi
+          gh release upload "$TAG" nginx-vhost nginx-vhost.sha256 --clobber
