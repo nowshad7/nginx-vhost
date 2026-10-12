@@ -248,7 +248,8 @@ hosts_add() {
   fi
   # Drop any previous entry we own for this domain, then append fresh.
   if grep -q "# nginx-vhost:$DOMAIN\$" "$HOSTS_FILE" 2>/dev/null; then
-    grep -v "# nginx-vhost:$DOMAIN\$" "$HOSTS_FILE" > "$HOSTS_FILE.nvtmp"
+    # grep -v exits 1 when no lines remain; that's fine here.
+    { grep -v "# nginx-vhost:$DOMAIN\$" "$HOSTS_FILE" || true; } > "$HOSTS_FILE.nvtmp"
     cat "$HOSTS_FILE.nvtmp" > "$HOSTS_FILE"
     rm -f "$HOSTS_FILE.nvtmp"
   fi
@@ -262,7 +263,8 @@ hosts_remove() {
     step "would remove $1 from $HOSTS_FILE"
     return 0
   fi
-  grep -v "# nginx-vhost:$1\$" "$HOSTS_FILE" > "$HOSTS_FILE.nvtmp"
+  # grep -v exits 1 when no lines remain; that's fine here.
+  { grep -v "# nginx-vhost:$1\$" "$HOSTS_FILE" || true; } > "$HOSTS_FILE.nvtmp"
   cat "$HOSTS_FILE.nvtmp" > "$HOSTS_FILE"
   rm -f "$HOSTS_FILE.nvtmp"
   step "cleaned $HOSTS_FILE"

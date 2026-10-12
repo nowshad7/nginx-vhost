@@ -62,7 +62,7 @@ These variables point every path the script writes at a scratch directory:
 ```bash
 SANDBOX="$(mktemp -d)"
 mkdir -p "$SANDBOX"/{available,enabled,ssl,log}
-printf '127.0.0.1\tlocalhost\n' > "$SANDBOX/hosts"   # must not be empty, see below
+printf '127.0.0.1\tlocalhost\n' > "$SANDBOX/hosts"
 export NGINX_VHOST_AVAILABLE="$SANDBOX/available" \
        NGINX_VHOST_ENABLED="$SANDBOX/enabled" \
        NGINX_VHOST_SSL_DIR="$SANDBOX/ssl" \
@@ -75,13 +75,6 @@ If these paths are writable, the script skips sudo. Be aware that
 `add` in the sandbox only succeeds where nginx is installed and runnable. On
 machines without nginx, the `add` rolls back and exits 1. In that case use
 `--dry-run`, or use `list` and `rm` against configs you create by hand.
-
-Known issue: give the sandbox hosts file at least one line that nginx-vhost
-doesn't manage. When every line is an nginx-vhost entry, removing one leaves
-nothing for `grep -v` to print. `grep -v` then exits 1, `set -e` stops the
-script, and you're left with the hosts entry still in place and a stray
-`hosts.nvtmp` file. Real `/etc/hosts` files always have a `localhost` line,
-so this only bites sandboxes.
 
 ## Output and exit codes
 
