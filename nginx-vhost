@@ -16,7 +16,7 @@
 
 set -euo pipefail
 
-VERSION="1.0.1"
+VERSION="1.0.2"
 PROG="${0##*/}"
 
 # ---------------------------------------------------------------------------
@@ -284,7 +284,10 @@ nginx_validate_reload() {
   local out; out="$(mktemp "${TMPDIR:-/tmp}/nginx-vhost-test.XXXXXX")"
   if nginx -t >"$out" 2>&1; then
     rm -f "$out"
-    if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet nginx; then
+    # /run/systemd/system exists only when systemd is running (sd_booted).
+    # Without it, e.g. in containers, systemctl just prints errors.
+    if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1 \
+       && systemctl is-active --quiet nginx 2>/dev/null; then
       systemctl reload nginx
     else
       nginx -s reload

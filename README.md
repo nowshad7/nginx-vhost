@@ -70,7 +70,8 @@ sudo curl -fsSL https://github.com/nowshad7/nginx-vhost/releases/latest/download
   -o /usr/local/bin/nginx-vhost && sudo chmod 0755 /usr/local/bin/nginx-vhost
 ```
 
-To pin a version, replace `latest/download` with `download/v1.0.1`. Every
+To pin a version, replace `latest/download` with `download/<tag>`, for
+example `download/v1.0.1`. Every
 release also attaches `nginx-vhost.sha256`. To verify a download:
 
 ```bash
