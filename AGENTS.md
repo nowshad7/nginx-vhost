@@ -10,8 +10,11 @@ tool does and how people use it, read [README.md](README.md) first.
 | `nginx-vhost` | The whole tool: a single Bash script (`set -euo pipefail`) |
 | `install.sh` | Copies `nginx-vhost` to `$PREFIX` (default `/usr/local/bin`) |
 | `README.md` | User-facing docs: keep it in sync with `usage()` in the script |
+| `tests/run.sh` | Sandboxed test suite: no root, nginx or network needed |
+| `.github/workflows/ci.yml` | CI: runs shellcheck and `tests/run.sh` on every push and PR |
+| `llms.txt` | Short summary of the project for LLMs |
 
-There are no dependencies to install, no build step, and no test suite yet.
+There are no dependencies to install and no build step.
 
 ## Safe by default: use `--dry-run`
 
@@ -73,8 +76,9 @@ export NGINX_VHOST_AVAILABLE="$SANDBOX/available" \
 If these paths are writable, the script skips sudo. Be aware that
 `nginx -t` still tests the **system** nginx config, not the sandbox. So a real
 `add` in the sandbox only succeeds where nginx is installed and runnable. On
-machines without nginx, the `add` rolls back and exits 1. In that case use
-`--dry-run`, or use `list` and `rm` against configs you create by hand.
+machines without nginx, the `add` rolls back and exits 1. To exercise the
+real write path anyway, put a stub `nginx` that exits 0 first on `PATH`.
+`tests/run.sh` does exactly this, with stubs that accept and reject.
 
 ## Output and exit codes
 
@@ -83,21 +87,32 @@ machines without nginx, the `add` rolls back and exits 1. In that case use
 - Colors are turned off when stdout isn't a TTY, so piped output is plain text.
 - The exit code is `0` on success and `1` on any error (`die`). The script has
   no other exit codes.
-- `list` prints a fixed-width table and has no JSON mode. A config counts as
-  managed only if it has a `# nginx-vhost: domain=... mode=... target=...`
-  header line.
+- For machine-readable state, use `list --json`. Parse that rather than the
+  table:
+
+  ```json
+  [
+    {"domain": "app.local", "mode": "proxy", "target": "3000", "enabled": true, "config": "/etc/nginx/sites-available/app.local.conf"}
+  ]
+  ```
+
+  `mode` is `proxy`, `static` or `php`. `target` is the value as the user
+  typed it. `enabled` is `false` when the `sites-enabled` symlink is missing.
+  An empty list prints `[]`.
+- A config counts as managed only if it has a
+  `# nginx-vhost: domain=... mode=... target=...` header line.
 
 ## Checks before committing changes to the script
 
+CI runs exactly these commands, so run them first:
+
 ```bash
-bash -n nginx-vhost                      # syntax
-shellcheck nginx-vhost install.sh        # if shellcheck is installed
-./nginx-vhost help
-./nginx-vhost add app.local 3000 --dry-run
-./nginx-vhost add web.local example.com:8080 --dry-run
-./nginx-vhost add docs.local "$(mktemp -d)" --static --dry-run
-./nginx-vhost add bad_domain 3000 --dry-run; echo "exit=$?"   # expect exit=1
+shellcheck nginx-vhost install.sh tests/run.sh
+./tests/run.sh
 ```
+
+If `shellcheck` isn't installed, `pip install shellcheck-py` provides it. When
+you change behavior, add a case to `tests/run.sh`.
 
 ## Conventions
 
@@ -109,5 +124,7 @@ shellcheck nginx-vhost install.sh        # if shellcheck is installed
   validate-then-roll-back guarantee still holds.
 - When you add or change an option, update `usage()`, the README options table,
   and this file together.
+- `rm` doesn't prompt for confirmation, on purpose: the tool has to stay usable
+  from scripts. Agents should confirm with the user before running `rm`.
 - Generated configs keep the `MANAGED_MARKER` line and the `# nginx-vhost:`
   metadata line. `list` and `rm` depend on both.

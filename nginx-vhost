@@ -51,7 +51,7 @@ ${C_BOLD}$PROG${C_RESET} v$VERSION - point any local domain at any location.
 ${C_BOLD}USAGE${C_RESET}
   $PROG add <domain> <target> [options]
   $PROG rm  <domain>
-  $PROG list
+  $PROG list [--json]
   $PROG help
 
 ${C_BOLD}TARGET${C_RESET} (auto-detected)
@@ -71,6 +71,7 @@ ${C_BOLD}OPTIONS${C_RESET}
   --no-hosts            do not touch $HOSTS_FILE
   --force               overwrite an existing vhost of the same name
   --dry-run             print what would happen; write nothing
+  --json                list: print managed vhosts as a JSON array
   -h, --help            show this help
 
 ${C_BOLD}EXAMPLES${C_RESET}
@@ -436,20 +437,44 @@ cmd_rm() {
 # ---------------------------------------------------------------------------
 # Subcommand: list
 # ---------------------------------------------------------------------------
+# Prints $1 as a JSON string literal.
+json_str() {
+  local s="$1"
+  s="${s//\\/\\\\}"; s="${s//\"/\\\"}"
+  s="${s//$'\t'/\\t}"; s="${s//$'\r'/\\r}"
+  printf '"%s"' "$s"
+}
+
 cmd_list() {
-  local found=0 f meta domain mode target enabled
-  printf '%s\n' "${C_BOLD}DOMAIN                          MODE     TARGET${C_RESET}"
+  local found=0 f meta domain mode target enabled is_enabled
+  if [ "$JSON" -eq 1 ]; then
+    printf '['
+  else
+    printf '%s\n' "${C_BOLD}DOMAIN                          MODE     TARGET${C_RESET}"
+  fi
   for f in "$NGINX_AVAILABLE"/*.conf; do
     [ -e "$f" ] || continue
     meta="$(grep -m1 '^# nginx-vhost:' "$f" 2>/dev/null || true)"
     [ -n "$meta" ] || continue
-    found=1
     domain="$(printf '%s' "$meta" | sed -n 's/.*domain=\([^ ]*\).*/\1/p')"
     mode="$(printf '%s' "$meta"   | sed -n 's/.*mode=\([^ ]*\).*/\1/p')"
     target="$(printf '%s' "$meta" | sed -n 's/.*target=\(.*\)$/\1/p')"
-    if [ -L "$(enabled_path "$domain")" ]; then enabled=""; else enabled=" ${C_YELLOW}(disabled)${C_RESET}"; fi
-    printf '%-31s %-8s %s%s\n' "$domain" "$mode" "$target" "$enabled"
+    if [ -L "$(enabled_path "$domain")" ]; then is_enabled=true; else is_enabled=false; fi
+    if [ "$JSON" -eq 1 ]; then
+      [ "$found" -eq 1 ] && printf ','
+      printf '\n  {"domain": %s, "mode": %s, "target": %s, "enabled": %s, "config": %s}' \
+        "$(json_str "$domain")" "$(json_str "$mode")" "$(json_str "$target")" \
+        "$is_enabled" "$(json_str "$f")"
+    else
+      if [ "$is_enabled" = true ]; then enabled=""; else enabled=" ${C_YELLOW}(disabled)${C_RESET}"; fi
+      printf '%-31s %-8s %s%s\n' "$domain" "$mode" "$target" "$enabled"
+    fi
+    found=1
   done
+  if [ "$JSON" -eq 1 ]; then
+    if [ "$found" -eq 1 ]; then printf '\n]\n'; else printf ']\n'; fi
+    return 0
+  fi
   [ "$found" -eq 1 ] || printf '%s\n' "    ${C_DIM}(none managed by $PROG yet)${C_RESET}"
 }
 
@@ -461,7 +486,7 @@ CMD="${1:-help}"; shift || true
 
 DOMAIN=""; TARGET=""; MODE=""
 ALIASES=""; PHP_SOCK=""; HOSTS_IP="127.0.0.1"; HTTP_PORT="80"
-FORCE=0; FORCE_PHP=0; FORCE_STATIC=0; USE_SSL=0; NO_HOSTS=0; DRY_RUN=0
+FORCE=0; FORCE_PHP=0; FORCE_STATIC=0; USE_SSL=0; NO_HOSTS=0; DRY_RUN=0; JSON=0
 
 positionals=()
 while [ $# -gt 0 ]; do
@@ -476,6 +501,7 @@ while [ $# -gt 0 ]; do
     --no-hosts)  NO_HOSTS=1 ;;
     --force)     FORCE=1 ;;
     --dry-run)   DRY_RUN=1 ;;
+    --json)      JSON=1 ;;
     -h|--help)   usage; exit 0 ;;
     --) shift; while [ $# -gt 0 ]; do positionals+=("$1"); shift; done; break ;;
     -*) die "unknown option: $1 (see '$PROG help')" ;;
