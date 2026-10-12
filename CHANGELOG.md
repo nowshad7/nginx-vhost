@@ -4,6 +4,13 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [1.0.3] - 2026-10-12
+
+### Added
+
+- README banner image: a retro 1970s hotel concierge routing domains to
+  their "rooms" (proxy, PHP, static), with descriptive alt text.
+
 ## [1.0.2] - 2026-10-12
 
 ### Fixed
@@ -45,6 +52,7 @@ All notable changes to this project are documented here. The format follows
 - Removing the last nginx-vhost entry from a hosts file no longer aborts
   partway through a rollback.
 
+[1.0.3]: https://github.com/nowshad7/nginx-vhost/releases/tag/v1.0.3
 [1.0.2]: https://github.com/nowshad7/nginx-vhost/releases/tag/v1.0.2
 [1.0.1]: https://github.com/nowshad7/nginx-vhost/releases/tag/v1.0.1
 [1.0.0]: https://github.com/nowshad7/nginx-vhost/releases/tag/v1.0.0
