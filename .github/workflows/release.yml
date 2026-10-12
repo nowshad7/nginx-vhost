@@ -1,0 +1,39 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check VERSION matches the tag
+        run: |
+          v="$(sed -n 's/^VERSION="\(.*\)"$/\1/p' nginx-vhost)"
+          if [ "v$v" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::nginx-vhost has VERSION=$v but the tag is $GITHUB_REF_NAME"
+            exit 1
+          fi
+      - name: shellcheck
+        run: shellcheck nginx-vhost install.sh tests/run.sh
+      - name: tests
+        run: ./tests/run.sh
+      - name: Publish release with the script attached
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha256sum nginx-vhost > nginx-vhost.sha256
+          # Release notes: this version's section of CHANGELOG.md.
+          awk -v v="${GITHUB_REF_NAME#v}" '
+            /^## \[/ { p = index($0, "[" v "]") > 0; next }
+            /^\[[^]]*\]: / { p = 0 }
+            p' CHANGELOG.md > notes.md
+          # The release may already exist if it was created in the GitHub UI.
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
+            || gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file notes.md
+          gh release upload "$GITHUB_REF_NAME" nginx-vhost nginx-vhost.sha256 --clobber

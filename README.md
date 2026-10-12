@@ -1,5 +1,9 @@
 # nginx-vhost
 
+[![CI](https://github.com/nowshad7/nginx-vhost/actions/workflows/ci.yml/badge.svg)](https://github.com/nowshad7/nginx-vhost/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/nowshad7/nginx-vhost)](https://github.com/nowshad7/nginx-vhost/releases/latest)
+[![License: MIT](https://img.shields.io/github/license/nowshad7/nginx-vhost)](LICENSE)
+
 Point any local domain at any location — a reverse proxy, a static site, or a
 PHP app — with a single command. Think of it as the nginx answer to the classic
 Apache `vhost` helper scripts, but safer and with teardown built in.
@@ -59,13 +63,31 @@ your running server.
 
 ## Install
 
+One line, from the latest release:
+
+```bash
+sudo curl -fsSL https://github.com/nowshad7/nginx-vhost/releases/latest/download/nginx-vhost \
+  -o /usr/local/bin/nginx-vhost && sudo chmod 0755 /usr/local/bin/nginx-vhost
+```
+
+To pin a version, replace `latest/download` with `download/v1.0.1`. Every
+release also attaches `nginx-vhost.sha256`. To verify a download:
+
+```bash
+curl -fsSLO https://github.com/nowshad7/nginx-vhost/releases/latest/download/nginx-vhost
+curl -fsSLO https://github.com/nowshad7/nginx-vhost/releases/latest/download/nginx-vhost.sha256
+sha256sum -c nginx-vhost.sha256 && sudo install -m 0755 nginx-vhost /usr/local/bin/nginx-vhost
+```
+
+From a clone:
+
 ```bash
 git clone https://github.com/nowshad7/nginx-vhost.git
 cd nginx-vhost
 sudo ./install.sh          # copies nginx-vhost to /usr/local/bin
-# or manually:
-sudo install -m 0755 nginx-vhost /usr/local/bin/nginx-vhost
 ```
+
+See [CHANGELOG.md](CHANGELOG.md) for what changed in each release.
 
 Requires `nginx` and `bash`. PHP apps need `php-fpm`. HTTPS needs `mkcert`.
 

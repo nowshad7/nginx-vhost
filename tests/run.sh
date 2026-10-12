@@ -20,12 +20,16 @@ fail() { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "$1"; [ -n "${2:-}" ] && prin
 mkdir -p "$WORK/nginx-pass" "$WORK/nginx-fail"
 printf '#!/bin/sh\nexit 0\n' > "$WORK/nginx-pass/nginx"
 printf '#!/bin/sh\necho "stub: config rejected" >&2\nexit 1\n' > "$WORK/nginx-fail/nginx"
+# Probe stub: records which files exist in $TMPDIR while `nginx -t` runs.
+mkdir -p "$WORK/nginx-probe"
+# shellcheck disable=SC2016  # $TMPDIR must expand inside the stub, not here
+printf '#!/bin/sh\nls "$TMPDIR" > "$TMPDIR/../probe"\nexit 1\n' > "$WORK/nginx-probe/nginx"
 chmod +x "$WORK"/nginx-*/nginx
 
 # Fresh sandbox per test. Sets OUT and RC from the last `run`.
 new_sandbox() {
   S="$WORK/sb.$RANDOM$RANDOM"
-  mkdir -p "$S"/{available,enabled,ssl,log}
+  mkdir -p "$S"/{available,enabled,ssl,log,tmp}
   printf '%s' "${1-}" > "$S/hosts"
 }
 run() {   # run <pass|fail> <args...>
@@ -33,7 +37,7 @@ run() {   # run <pass|fail> <args...>
   OUT="$(PATH="$WORK/nginx-$stub:$PATH" \
     NGINX_VHOST_AVAILABLE="$S/available" NGINX_VHOST_ENABLED="$S/enabled" \
     NGINX_VHOST_SSL_DIR="$S/ssl" NGINX_VHOST_HOSTS="$S/hosts" \
-    NGINX_VHOST_LOG_DIR="$S/log" "$BIN" "$@" 2>&1)"
+    NGINX_VHOST_LOG_DIR="$S/log" TMPDIR="$S/tmp" "$BIN" "$@" 2>&1)"
   RC=$?
 }
 has()    { printf '%s' "$OUT" | grep -qF -- "$1"; }
@@ -106,6 +110,14 @@ new_sandbox $'127.0.0.1\tlocalhost\n'
 run fail add bad.local 3000
 [ $RC -eq 1 ] && has "rolled back" && no_conf \
   && ! grep -q bad.local "$S/hosts" && no_tmp && ok "full rollback" || fail "full rollback" "$OUT"
+has "stub: config rejected" && ok "shows nginx -t output" || fail "shows nginx -t output" "$OUT"
+[ -z "$(ls -A "$S/tmp")" ] && ok "temp file removed after failed test" || fail "temp file removed after failed test" "$(ls -A "$S/tmp")"
+run probe add probe.local 3000
+grep -qE '^nginx-vhost-test\.[A-Za-z0-9]{6}$' "$S/probe" 2>/dev/null \
+  && ok "nginx -t output goes to a mktemp file in TMPDIR" \
+  || fail "nginx -t output goes to a mktemp file in TMPDIR" "$(cat "$S/probe" 2>/dev/null)"
+run pass add good.local 3000
+[ $RC -eq 0 ] && [ -z "$(ls -A "$S/tmp")" ] && ok "temp file removed after passing test" || fail "temp file removed after passing test" "$(ls -A "$S/tmp")"
 
 echo "hosts file holding only managed entries"
 new_sandbox
