@@ -14,6 +14,8 @@ path it writes.
 Install the latest release:
 `sudo curl -fsSL https://github.com/nowshad7/nginx-vhost/releases/latest/download/nginx-vhost -o /usr/local/bin/nginx-vhost && sudo chmod 0755 /usr/local/bin/nginx-vhost`
 
+Or with Homebrew: `brew install nowshad7/tap/nginx-vhost`
+
 Repository: https://github.com/nowshad7/nginx-vhost
 
 ## Docs

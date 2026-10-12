@@ -75,14 +75,24 @@ sudo curl -fsSL https://github.com/nowshad7/nginx-vhost/releases/latest/download
 ```
 
 To pin a version, replace `latest/download` with `download/<tag>`, for
-example `download/v1.0.1`. Every
-release also attaches `nginx-vhost.sha256`. To verify a download:
+example `download/v1.0.1`. Every release also attaches `nginx-vhost.sha256`.
+To verify a download:
 
 ```bash
 curl -fsSLO https://github.com/nowshad7/nginx-vhost/releases/latest/download/nginx-vhost
 curl -fsSLO https://github.com/nowshad7/nginx-vhost/releases/latest/download/nginx-vhost.sha256
 sha256sum -c nginx-vhost.sha256 && sudo install -m 0755 nginx-vhost /usr/local/bin/nginx-vhost
 ```
+
+With [Homebrew](https://brew.sh) (Linux, or macOS, which is untested so far):
+
+```bash
+brew install nowshad7/tap/nginx-vhost
+```
+
+Homebrew's nginx reads `$(brew --prefix)/etc/nginx/servers/` instead of
+`/etc/nginx/sites-enabled/`, so point nginx-vhost there.
+`brew info nginx-vhost` shows the exact lines to add to your shell profile.
 
 From a clone:
 
